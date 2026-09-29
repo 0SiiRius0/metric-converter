@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Metric converter</title>
+<style>
+:root{--bg:#e9edf2;--card:#fff;--ink:#14202e;--mute:#5d6b7c;--line:#d3dae3;--accent:#1d4ed8;--wash:#eef3ff}
+@media(prefers-color-scheme:dark){:root{--bg:#0d1218;--card:#151c25;--ink:#e8edf3;--mute:#93a1b3;--line:#263242;--accent:#7aa2ff;--wash:#1a2536}}
+*{box-sizing:border-box}
+body{margin:0;min-height:100vh;display:grid;place-items:center;padding:20px;background:var(--bg);color:var(--ink);font:16px/1.4 system-ui,-apple-system,"Segoe UI",sans-serif}
+main{width:100%;max-width:520px;background:var(--card);border:1px solid var(--line);border-radius:14px;padding:24px}
+h1{font-size:1.4rem;margin:0 0 4px;letter-spacing:-.01em}
+.sub{margin:0 0 8px;color:var(--mute);font-size:.9rem}
+label{display:block;font-size:.85rem;color:var(--mute);margin:18px 0 6px}
+select,input{width:100%;font:inherit;color:inherit;background:var(--card);border:1px solid var(--line);border-radius:8px;padding:10px 12px}
+select:focus-visible,input:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+select:disabled{opacity:.45}
+.pair{display:grid;grid-template-columns:1fr 1.4fr;gap:8px;margin-top:8px}
+.swap{display:block;margin:14px auto 0;background:none;border:1px solid var(--line);color:var(--accent);border-radius:8px;padding:6px 16px;font:inherit;cursor:pointer}
+.swap:hover{background:var(--wash)}
+.out{margin-top:6px;padding:14px;border-radius:8px;background:var(--wash);font:600 1.6rem/1.2 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:var(--accent);word-break:break-all;min-height:3.4rem}
+.eq{margin:10px 0 0;color:var(--mute);font-size:.9rem;min-height:1.3em}
+footer{margin-top:18px;color:var(--mute);font-size:.8rem}
+</style>
+</head>
+<body>
+<main>
+  <h1>Metric converter</h1>
+  <p class="sub">Every SI prefix from quecto to quetta, across the SI unit families.</p>
+
+  <label for="cat">Quantity</label>
+  <select id="cat"></select>
+
+  <label for="val">From</label>
+  <input id="val" type="number" step="any" value="1" inputmode="decimal">
+  <div class="pair">
+    <select id="fp" aria-label="From prefix"></select>
+    <select id="fu" aria-label="From unit"></select>
+  </div>
+
+  <button class="swap" id="swap" type="button">Swap units</button>
+
+  <label for="tu">To</label>
+  <div class="out" id="out" aria-live="polite">Loading…</div>
+  <div class="pair">
+    <select id="tp" aria-label="To prefix"></select>
+    <select id="tu" aria-label="To unit"></select>
+  </div>
+  <p class="eq" id="eq"></p>
+  <footer>The conversion engine is C++ compiled to WebAssembly.</footer>
+</main>
+
+<script src="converter.js"></script>
+<script>
+const $ = id => document.getElementById(id);
+const fmt = v => {
+  if (v === 0) return "0";
+  const a = Math.abs(v);
+  const s = (a >= 1e15 || a < 1e-6) ? v.toExponential(9) : String(parseFloat(v.toPrecision(12)));
+  return s.replace(/\.?0+e/, "e");
+};
+
+createConverter().then(M => {
+  const cat = JSON.parse(M.cwrap("catalog_json", "string", [])());
+  const conv = M.cwrap("convert", "number", Array(6).fill("number"));
+  const P = cat.prefixes, C = cat.categories;
+  const NONE = P.findIndex(p => p.e === 0), MILLI = P.findIndex(p => p.e === -3);
+  const fill = (sel, items, label) =>
+    sel.innerHTML = items.map((x, i) => `<option value="${i}">${label(x)}</option>`).join("");
+  const units = () => C[+$("cat").value].units;
+
+  fill($("cat"), C, c => c.name);
+  for (const id of ["fp", "tp"]) fill($(id), P, p => p.s ? `${p.n} (${p.s})` : "no prefix");
+
+  function sync() {
+    for (const s of ["f", "t"]) {
+      const u = units()[+$(s + "u").value];
+      $(s + "p").disabled = !u.p;
+      if (!u.p) $(s + "p").value = NONE;
+    }
+  }
+
+  function run() {
+    sync();
+    const v = parseFloat($("val").value);
+    if (!isFinite(v)) { $("out").textContent = "—"; $("eq").textContent = ""; return; }
+    const U = units(), fu = U[+$("fu").value], tu = U[+$("tu").value];
+    const r = conv(+$("cat").value, +$("fu").value, +$("fp").value, +$("tu").value, +$("tp").value, v);
+    const sym = (u, p) => (u.p ? P[+$(p).value].s : "") + u.s;
+    $("out").textContent = fmt(r);
+    $("eq").textContent = `${fmt(v)} ${sym(fu, "fp")} = ${fmt(r)} ${sym(tu, "tp")}`;
+  }
+
+  function setCat() {
+    for (const id of ["fu", "tu"]) fill($(id), units(), u => `${u.n} (${u.s})`);
+    $("fu").value = 0; $("tu").value = 0;
+    $("fp").value = NONE; $("tp").value = MILLI;
+    run();
+  }
+
+  $("cat").onchange = setCat;
+  for (const id of ["val", "fp", "fu", "tp", "tu"]) $(id).oninput = run;
+  $("swap").onclick = () => {
+    for (const [a, b] of [["fp", "tp"], ["fu", "tu"]]) { const t = $(a).value; $(a).value = $(b).value; $(b).value = t; }
+    run();
+  };
+  setCat();
+}).catch(() => { $("out").textContent = "Could not load the converter."; });
+</script>
+</body>
+</html>
