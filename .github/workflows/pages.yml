@@ -20,7 +20,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: mymindstorm/setup-emsdk@v14
-      - run: ./build.sh
+      - run: bash build.sh
       - uses: actions/upload-pages-artifact@v3
         with:
           path: site
